@@ -1,0 +1,154 @@
+# Provides a KafkaCluster as a Google Managed Service for Apache Kafka cluster + topics, through one
+# provider-opentofu Workspace running the inline module below. The google provider and the state
+# backend come from the `gcp` ClusterProviderConfig (crossplane-provider-config.yaml).
+#
+# Workspace external name = "<namespace>-<name>": it is the tofu workspace, which keys the state
+# Secret, so it must be unique and stable across the Workspace's lifetime.
+#
+# Dev-cluster trade-offs, deliberate (as for Cloud SQL):
+#   - no backup or mirroring: replication factor 3 across three zones is the only durability, and
+#     gke-teardown.sh deletes the cluster with its messages. Cloud SQL holds the job records.
+#   - deletion_policy DELETE: deleting the KafkaCluster destroys the Google cluster.
+# Hardening kept regardless: private access only (no public_cluster_config), SASL/TLS on :9092.
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: kafkacluster-managedkafka
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  compositeTypeRef:
+    apiVersion: platform.miqui.dev/v1alpha1
+    kind: KafkaCluster
+  mode: Pipeline
+  pipeline:
+    - step: managedkafka
+      functionRef:
+        name: function-patch-and-transform
+      input:
+        apiVersion: pt.fn.crossplane.io/v1beta1
+        kind: Resources
+        resources:
+          - name: workspace
+            base:
+              apiVersion: opentofu.m.upbound.io/v1beta1
+              kind: Workspace
+              spec:
+                providerConfigRef:
+                  kind: ClusterProviderConfig
+                  name: gcp
+                forProvider:
+                  source: Inline
+                  # Every key is overwritten by the patches below.
+                  varmap:
+                    name: ""
+                    vcpu_count: 3
+                    memory_gib: 12
+                    subnetwork: ""
+                    topics: {}
+                  module: |
+                    variable "name" {
+                      type = string
+                    }
+                    variable "vcpu_count" {
+                      type = number
+                    }
+                    variable "memory_gib" {
+                      type = number
+                    }
+                    variable "subnetwork" {
+                      type = string
+                    }
+                    variable "topics" {
+                      type = map(object({
+                        partitions  = optional(number, 6)
+                        retentionMs = optional(string, "86400000")
+                      }))
+                      default = {}
+                    }
+
+                    resource "google_managed_kafka_cluster" "this" {
+                      cluster_id = var.name
+                      location   = "us-central1"
+                      capacity_config {
+                        vcpu_count   = var.vcpu_count
+                        memory_bytes = var.memory_gib * 1073741824
+                      }
+                      gcp_config {
+                        access_config {
+                          network_configs {
+                            subnet = var.subnetwork
+                          }
+                        }
+                      }
+                      # Spread existing partitions over new brokers when vcpu_count grows.
+                      rebalance_config {
+                        mode = "AUTO_REBALANCE_ON_SCALE_UP"
+                      }
+                      # gke-teardown.sh finds leftovers by the platform label.
+                      labels = {
+                        managed-by = "crossplane"
+                        platform   = "gke-quarkus-grpc-o2"
+                      }
+                    }
+
+                    resource "google_managed_kafka_topic" "this" {
+                      for_each           = var.topics
+                      cluster            = google_managed_kafka_cluster.this.cluster_id
+                      location           = "us-central1"
+                      topic_id           = each.key
+                      partition_count    = each.value.partitions
+                      replication_factor = 3
+                      configs = {
+                        "retention.ms"        = each.value.retentionMs
+                        "min.insync.replicas" = "2"
+                      }
+                    }
+
+                    # Written to the connection Secret and status.atProvider.outputs.
+                    output "bootstrap_address" {
+                      value = google_managed_kafka_cluster.this.bootstrap_address
+                    }
+                    output "cluster_name" {
+                      value = google_managed_kafka_cluster.this.cluster_id
+                    }
+            patches:
+              - type: CombineFromComposite
+                combine:
+                  variables:
+                    - fromFieldPath: metadata.namespace
+                    - fromFieldPath: metadata.name
+                  strategy: string
+                  string:
+                    fmt: "%s-%s"
+                toFieldPath: metadata.annotations[crossplane.io/external-name]
+              - type: FromCompositeFieldPath
+                fromFieldPath: metadata.name
+                toFieldPath: spec.forProvider.varmap.name
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.vcpuCount
+                toFieldPath: spec.forProvider.varmap.vcpu_count
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.memoryGiB
+                toFieldPath: spec.forProvider.varmap.memory_gib
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.subnetwork
+                toFieldPath: spec.forProvider.varmap.subnetwork
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.topics
+                toFieldPath: spec.forProvider.varmap.topics
+                policy:
+                  toFieldPath: Replace
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.connectionSecretName
+                toFieldPath: spec.writeConnectionSecretToRef.name
+              - type: ToCompositeFieldPath
+                fromFieldPath: status.atProvider.outputs.cluster_name
+                toFieldPath: status.clusterName
+              - type: ToCompositeFieldPath
+                fromFieldPath: status.atProvider.outputs.bootstrap_address
+                toFieldPath: status.bootstrapAddress
+
+    - step: automatically-detect-ready-composed-resources
+      functionRef:
+        name: function-auto-ready

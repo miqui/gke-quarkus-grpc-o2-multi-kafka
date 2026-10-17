@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 #
 # gke-teardown.sh — delete what gke-deploy.sh/gke-bootstrap.sh created, in dependency order:
-#   1. In-cluster: stop Argo CD reconciling, then delete the Gateway (-> Google load balancer)
-#      and the PostgresInstance (-> Crossplane deletes the Cloud SQL instance) and wait for both
-#      to be gone - deleting the cluster first would orphan them, still billing
+#   1. In-cluster: stop Argo CD reconciling, then delete the Gateway (-> Google load balancer),
+#      the KafkaCluster (-> Crossplane runs `tofu destroy` on the Managed Kafka cluster) and the
+#      PostgresInstance (-> Crossplane deletes the Cloud SQL instance) and wait for all of them
+#      to be gone - deleting the cluster first would orphan them, still billing (and the Kafka
+#      cluster's OpenTofu state lives in a Secret in the cluster, so it would be lost too)
 #   2. GKE cluster
-#   3. Leftovers: any Cloud SQL instance this platform labelled, the load balancer's forwarding
+#   3. Leftovers: any Cloud SQL instance or Managed Kafka cluster this platform labelled, the
+#      load balancer's forwarding
 #      rule on grpc-ip, network endpoint groups in the VPC, and the PVCs' persistent disks (a
 #      cluster deletion leaves both behind)
 #   4. Private Service Access peering + range, static IP, SSL policy, Cloudflare A record
@@ -47,11 +50,13 @@ DNS_AUTH="grpc-dns-auth"
 CERT="grpc-cert"
 CERT_MAP="grpc-cert-map"
 CERT_MAP_ENTRY="grpc-cert-map-entry"
-SERVICE_ACCOUNTS=(gke-dev-nodes crossplane-gcp external-secrets argocd-image-updater ci-springboot-grpc-o2)
+SERVICE_ACCOUNTS=(gke-dev-nodes crossplane-gcp crossplane-kafka external-secrets argocd-image-updater
+                  ci-springboot-grpc-o2)
 PROJECT_ROLES=(
   "gke-dev-nodes=roles/container.defaultNodeServiceAccount"
   "crossplane-gcp=roles/cloudsql.admin"
   "crossplane-gcp=roles/compute.networkUser"
+  "crossplane-kafka=roles/managedkafka.admin"
 )
 SECRETS=(postgres-app-password grafana-admin-user grafana-admin-password
          openobserve-root-email openobserve-root-password)
@@ -84,6 +89,7 @@ cat <<EOF
 About to DELETE the following resources in project '$PROJECT_ID':
 
   Cloud SQL            : the platform's instance(s) - ALL DATA IS LOST (no backups are kept)
+  Managed Kafka        : the platform's cluster(s) in $REGION - ALL MESSAGES ARE LOST (no backups)
   Load balancer        : Gateway for $API_HOST, static IP $IP_NAME, SSL policy $SSL_POLICY
   GKE cluster          : $CLUSTER (zone $ZONE)
   Persistent disks     : the PVCs' disks (OpenObserve, Trivy) - their data is lost
@@ -122,6 +128,16 @@ if gcloud container clusters describe "$CLUSTER" --zone="$ZONE" &>/dev/null; the
         || true
     fi
 
+    # Both deletions are started before either is waited for: they run in parallel.
+    log "Deleting KafkaClusters (Crossplane runs tofu destroy on the Managed Kafka cluster; ~10-30 min)"
+    HAS_KAFKA=0
+    if kubectl get crd kafkaclusters.platform.miqui.dev >/dev/null 2>&1; then
+      kubectl delete kafkaclusters --all -A --wait=false || true
+      HAS_KAFKA=1
+    else
+      skip
+    fi
+
     log "Deleting PostgresInstances (Crossplane deletes the Cloud SQL instance; ~5 min)"
     if kubectl get crd postgresinstances.platform.miqui.dev >/dev/null 2>&1; then
       kubectl delete postgresinstances --all -A --wait=false || true
@@ -130,6 +146,14 @@ if gcloud container clusters describe "$CLUSTER" --zone="$ZONE" &>/dev/null; the
         || true
     else
       skip
+    fi
+
+    if [[ "$HAS_KAFKA" -eq 1 ]]; then
+      # A Workspace is gone only once its tofu destroy succeeded; a failed one keeps its finalizer
+      # and the leftover check after the cluster deletion removes the Kafka cluster instead.
+      wait_until 2400 "Managed Kafka workspaces (tofu destroy) to finish" \
+        bash -c '[[ -z "$(kubectl get workspaces.opentofu.m.upbound.io -A --no-headers 2>/dev/null)" ]]' \
+        || true
     fi
   else
     echo "WARNING: cluster exists but its API is unreachable (IP changed?); skipping in-cluster" >&2
@@ -165,6 +189,20 @@ if [[ -n "$LEFTOVER_SQL" ]]; then
   for inst in $LEFTOVER_SQL; do
     echo "    deleting $inst"
     gcloud sql instances delete "$inst" --quiet
+  done
+else
+  echo "    none"
+fi
+
+log "Checking for leftover Managed Kafka clusters in $REGION (label platform=gke-quarkus-grpc-o2)"
+# Deleting a cluster deletes its topics. Not --async: the subnet can't be deleted (step 5) while
+# the cluster's Private Service Connect endpoints still use it.
+LEFTOVER_KAFKA=$(gcloud managed-kafka clusters list --location="$REGION" \
+  --filter="labels.platform=gke-quarkus-grpc-o2" --format='value(name.basename())' 2>/dev/null || true)
+if [[ -n "$LEFTOVER_KAFKA" ]]; then
+  for kc in $LEFTOVER_KAFKA; do
+    echo "    deleting $kc"
+    gcloud managed-kafka clusters delete "$kc" --location="$REGION" --quiet
   done
 else
   echo "    none"

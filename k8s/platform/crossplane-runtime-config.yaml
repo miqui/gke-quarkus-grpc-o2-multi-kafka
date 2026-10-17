@@ -27,3 +27,39 @@ spec:
                   memory: 256Mi
                 limits:
                   memory: 1Gi
+---
+# The OpenTofu provider's ServiceAccount, pinned and annotated for Workload Identity like the one
+# above but mapped to its own GSA, crossplane-kafka (roles/managedkafka.admin, gke-deploy.sh). The
+# google OpenTofu provider inside the pod finds it through Application Default Credentials.
+#
+# --timeout: tofu processes are killed after 20m by default, and creating a Kafka cluster takes
+# ~30m - a killed apply leaves the cluster half-recorded in the state. --poll: every poll is a full
+# `tofu plan` against the Google API, so check for drift every 30m rather than 10m.
+apiVersion: pkg.crossplane.io/v1beta1
+kind: DeploymentRuntimeConfig
+metadata:
+  name: provider-opentofu
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  serviceAccountTemplate:
+    metadata:
+      name: provider-opentofu
+      annotations:
+        iam.gke.io/gcp-service-account: crossplane-kafka@k8s-dev-412419.iam.gserviceaccount.com
+  deploymentTemplate:
+    spec:
+      selector: {}
+      template:
+        spec:
+          containers:
+            - name: package-runtime
+              args:
+                - --timeout=60m
+                - --poll=30m
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  memory: 1Gi

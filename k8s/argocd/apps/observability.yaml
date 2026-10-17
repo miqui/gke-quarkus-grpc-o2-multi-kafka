@@ -13,7 +13,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/miqui/gke-quarkus-grpc-o2.git
+    repoURL: https://github.com/miqui/gke-quarkus-grpc-o2-multi-kafka.git
     targetRevision: main
     path: k8s/observability
   destination:

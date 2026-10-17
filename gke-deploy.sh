@@ -14,6 +14,8 @@
 #   - Dataplane V2 (NetworkPolicy enforcement), Workload Identity, Gateway API, Shielded Nodes
 #   - Dedicated least-privilege node service account (not the Editor-role default compute SA)
 #   - Private Service Access range + peering so Cloud SQL (created by Crossplane) gets a private IP
+#   - Managed Service for Apache Kafka API; the cluster itself is created by Crossplane
+#     (provider-opentofu) and reached over Private Service Connect in $SUBNET
 #   - Artifact Registry repo in-region (image streaming; pulls bypass NAT) with a cleanup policy
 #   - Workload Identity GSAs for in-cluster controllers: Crossplane, External Secrets, Image Updater
 #   - Keyless GitHub Actions → Artifact Registry push (Workload Identity Federation, no JSON keys)
@@ -57,7 +59,7 @@ MAX_NODES="${MAX_NODES:-6}"
 NODE_DISK_SIZE_GB="${NODE_DISK_SIZE_GB:-30}"
 DOMAIN="${DOMAIN:-miqui.dev}"
 API_HOST="${API_HOST:-grpc.${DOMAIN}}"
-GITHUB_REPO="${GITHUB_REPO:-miqui/gke-quarkus-grpc-o2}"
+GITHUB_REPO="${GITHUB_REPO:-miqui/gke-quarkus-grpc-o2-multi-kafka}"
 
 SUBNET_RANGE="10.0.0.0/20"
 PODS_RANGE="10.4.0.0/14"
@@ -72,6 +74,7 @@ PSA_RANGE_PREFIX="20"
 # Helm values / Crossplane DeploymentRuntimeConfig in k8s/ name explicitly.
 NODE_SA="gke-dev-nodes"
 CROSSPLANE_SA="crossplane-gcp"          # KSA crossplane-system/provider-gcp
+KAFKA_SA="crossplane-kafka"             # KSA crossplane-system/provider-opentofu
 ESO_SA="external-secrets"               # KSA external-secrets/external-secrets
 IMAGE_UPDATER_SA="argocd-image-updater" # KSA argocd/argocd-image-updater
 CI_SA="ci-springboot-grpc-o2"   # one CI service account per project
@@ -173,6 +176,7 @@ gcloud services enable \
   compute.googleapis.com \
   artifactregistry.googleapis.com \
   sqladmin.googleapis.com \
+  managedkafka.googleapis.com \
   servicenetworking.googleapis.com \
   secretmanager.googleapis.com \
   certificatemanager.googleapis.com \
@@ -197,6 +201,7 @@ project_role() { # project_role <sa id> <role>
 log "Creating service accounts"
 ensure_sa "$NODE_SA"          "GKE dev-cluster nodes"
 ensure_sa "$CROSSPLANE_SA"    "Crossplane GCP provider (Cloud SQL)"
+ensure_sa "$KAFKA_SA"         "Crossplane OpenTofu provider (Managed Kafka)"
 ensure_sa "$ESO_SA"           "External Secrets Operator (Secret Manager reader)"
 ensure_sa "$IMAGE_UPDATER_SA" "Argo CD Image Updater (Artifact Registry reader)"
 ensure_sa "$CI_SA"            "GitHub Actions image push"
@@ -208,6 +213,9 @@ project_role "$NODE_SA" roles/container.defaultNodeServiceAccount
 # Crossplane creates/deletes Cloud SQL instances attached to the VPC by private IP.
 project_role "$CROSSPLANE_SA" roles/cloudsql.admin
 project_role "$CROSSPLANE_SA" roles/compute.networkUser
+# Crossplane (OpenTofu) creates/deletes the Managed Kafka cluster and its topics. The service's own
+# agent sets up the Private Service Connect endpoints in the subnet.
+project_role "$KAFKA_SA" roles/managedkafka.admin
 # ESO gets secretAccessor per secret (gke-secrets-seed.sh), not project-wide.
 
 # ---- 2. Dedicated VPC + subnet --------------------------------------------
@@ -365,6 +373,7 @@ wi_bind() { # wi_bind <gsa id> <namespace> <ksa>
 }
 log "Binding Kubernetes ServiceAccounts to GCP service accounts (Workload Identity)"
 wi_bind "$CROSSPLANE_SA"    crossplane-system provider-gcp
+wi_bind "$KAFKA_SA"         crossplane-system provider-opentofu
 wi_bind "$ESO_SA"           external-secrets  external-secrets
 wi_bind "$IMAGE_UPDATER_SA" argocd            argocd-image-updater
 

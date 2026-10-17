@@ -1,4 +1,4 @@
-# Default credentials for every namespaced GCP managed resource: the provider pod's own ambient
+# Default credentials for every namespaced GCP (Cloud SQL) managed resource: the provider pod's own ambient
 # Google credentials, i.e. the Workload Identity mapping set up by
 # crossplane-runtime-config.yaml. No service-account key exists anywhere.
 #
@@ -15,3 +15,39 @@ spec:
   projectID: k8s-dev-412419
   credentials:
     source: InjectedIdentity
+---
+# Credentials and shared HCL for every OpenTofu Workspace (the KafkaCluster Composition). No
+# credential files: the google provider uses the pod's Workload Identity (crossplane-kafka GSA).
+#
+# State: provider-opentofu keeps none of its own, so it goes to the kubernetes backend - one Secret
+# per Workspace in crossplane-system, named tfstate-<tofu workspace>-kafka, where the tofu
+# workspace is the Workspace's external name (set per namespace/name by the Composition). The state
+# lives only in this cluster: gke-teardown.sh must delete every KafkaCluster before the cluster.
+apiVersion: opentofu.m.upbound.io/v1beta1
+kind: ClusterProviderConfig
+metadata:
+  name: gcp
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  credentials: []
+  configuration: |
+    terraform {
+      required_providers {
+        google = {
+          source  = "hashicorp/google"
+          version = "~> 8.7"
+        }
+      }
+      backend "kubernetes" {
+        secret_suffix     = "kafka"
+        namespace         = "crossplane-system"
+        in_cluster_config = true
+      }
+    }
+
+    provider "google" {
+      project = "k8s-dev-412419"
+      region  = "us-central1"
+    }

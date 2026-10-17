@@ -1,0 +1,101 @@
+# KafkaCluster: the platform's "give me a Kafka cluster with these topics" API, the sibling of
+# PostgresInstance. An application declares one in its own namespace (k8s/kafka.yaml); the
+# Composition in kafka-composition.yaml decides how it's provided (today: Google Managed Service for
+# Apache Kafka through provider-opentofu - swap the Composition, not this API, if a native provider
+# appears).
+#
+# Sizing defaults follow Google's guide (20 MBps of writes per vCPU at 50% target utilisation,
+# 4 GiB per vCPU): 3 vCPU / 12 GiB takes ~8 MBps produced at replication factor 3. Brokers are
+# spread over the region's three zones by the service.
+#
+# The cluster ID is the KafkaCluster's name; cluster IDs are per project and region, so two
+# namespaces must not use the same name.
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: kafkaclusters.platform.miqui.dev
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  scope: Namespaced
+  group: platform.miqui.dev
+  names:
+    kind: KafkaCluster
+    plural: kafkaclusters
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      additionalPrinterColumns:
+        - name: VCPU
+          type: integer
+          jsonPath: .spec.vcpuCount
+        - name: BOOTSTRAP
+          type: string
+          jsonPath: .status.bootstrapAddress
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required:
+                - connectionSecretName
+              x-kubernetes-validations:
+                - rule: self.memoryGiB >= self.vcpuCount && self.memoryGiB <= 8 * self.vcpuCount
+                  message: memoryGiB must be between 1 and 8 GiB per vCPU
+                # Managed Kafka never removes brokers, so a scale-down can't be undone cheaply.
+                - rule: "!has(oldSelf.vcpuCount) || self.vcpuCount >= oldSelf.vcpuCount"
+                  message: vcpuCount cannot be decreased
+              properties:
+                vcpuCount:
+                  type: integer
+                  default: 3
+                  minimum: 3
+                  maximum: 12
+                memoryGiB:
+                  type: integer
+                  default: 12
+                  minimum: 3
+                  maximum: 96
+                subnetwork:
+                  description: >-
+                    Subnet the brokers' and bootstrap's private IPs and DNS names are created in
+                    (Private Service Connect). Must be in us-central1.
+                  type: string
+                  default: projects/k8s-dev-412419/regions/us-central1/subnetworks/dev-subnet
+                topics:
+                  description: >-
+                    Topics by name (letters, digits, '-', '_'). Replication factor is always 3 with
+                    min.insync.replicas 2. Partitions can grow but never shrink.
+                  type: object
+                  default: {}
+                  maxProperties: 50
+                  x-kubernetes-validations:
+                    - rule: self.all(k, k.matches('^[a-zA-Z0-9_-]{1,100}$'))
+                      message: topic names may only contain letters, digits, '-' and '_'
+                  additionalProperties:
+                    type: object
+                    properties:
+                      partitions:
+                        type: integer
+                        default: 6
+                        minimum: 1
+                        maximum: 60
+                      retentionMs:
+                        description: retention.ms as a string; "-1" keeps messages forever.
+                        type: string
+                        default: "86400000"
+                        pattern: ^(-1|[0-9]+)$
+                connectionSecretName:
+                  description: >-
+                    Secret (same namespace) to write connection details to: bootstrap_address
+                    (SASL on :9092) and cluster_name.
+                  type: string
+            status:
+              type: object
+              properties:
+                clusterName:
+                  type: string
+                bootstrapAddress:
+                  type: string

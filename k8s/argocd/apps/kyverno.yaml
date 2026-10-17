@@ -11,7 +11,7 @@ metadata:
 spec:
   project: default
   sources:
-    - repoURL: https://github.com/miqui/gke-quarkus-grpc-o2.git
+    - repoURL: https://github.com/miqui/gke-quarkus-grpc-o2-multi-kafka.git
       targetRevision: main
       ref: values
     - repoURL: https://kyverno.github.io/kyverno/

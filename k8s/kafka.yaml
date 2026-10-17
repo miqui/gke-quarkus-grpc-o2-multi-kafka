@@ -1,0 +1,28 @@
+# The job-manager-api's Kafka cluster, requested through the platform's KafkaCluster API
+# (k8s/platform/kafka-xrd.yaml). The Composition provides it as a Google Managed Service for Apache
+# Kafka cluster (3 vCPU / 12 GiB, brokers across us-central1-a/b/c, private access from dev-subnet)
+# and writes bootstrap_address and cluster_name to the kafka-connection Secret.
+# First provisioning takes ~30 minutes; `kubectl get kafkacluster` shows progress.
+#
+# Topics: one per job type, so a slow type never holds up another in a partition. 6 partitions
+# each = the most consumer pods (HPA max) that can share a type's work. Keyed by job id. Cloud SQL
+# keeps the job records, so a day of retention is only for replay; the DLQ keeps a week.
+apiVersion: platform.miqui.dev/v1alpha1
+kind: KafkaCluster
+metadata:
+  name: job-manager-kafka
+  labels:
+    app: kafka
+spec:
+  vcpuCount: 3
+  memoryGiB: 12
+  connectionSecretName: kafka-connection
+  topics:
+    jobs-demo-echo: {}
+    jobs-demo-sleep: {}
+    jobs-report-generate: {}
+    jobs-email-send: {}
+    jobs-retry: {}
+    jobs-dlq:
+      partitions: 3
+      retentionMs: "604800000"

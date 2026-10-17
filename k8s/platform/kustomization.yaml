@@ -2,9 +2,11 @@
 # Crossplane controllers (and their CRDs) exist:
 #
 #   - the ClusterSecretStore every ExternalSecret in the repo reads through (GCP Secret Manager)
-#   - Crossplane's GCP Cloud SQL provider, the functions its Composition runs, and the provider's
-#     credentials config (Workload Identity - no key file)
+#   - Crossplane's GCP Cloud SQL provider and OpenTofu provider (Managed Kafka), the functions
+#     their Compositions run, and each provider's credentials config (Workload Identity, one GSA
+#     per provider - no key file)
 #   - the PostgresInstance API (XRD) and its Cloud SQL Composition, which k8s/postgres.yaml uses
+#   - the KafkaCluster API (XRD) and its Managed Kafka Composition, which k8s/kafka.yaml uses
 #
 # Argo CD sync waves inside this Application: packages first (0), then the objects whose CRDs
 # those packages install (1).
@@ -18,3 +20,5 @@ resources:
   - crossplane-provider-config.yaml
   - postgres-xrd.yaml
   - postgres-composition.yaml
+  - kafka-xrd.yaml
+  - kafka-composition.yaml

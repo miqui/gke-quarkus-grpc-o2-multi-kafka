@@ -1,7 +1,7 @@
-# Crossplane packages. Only the Cloud SQL provider is installed (not the whole GCP family - each
-# sub-provider is a separate pod with its own CRDs, and this repo only needs sql.gcp); Crossplane
-# pulls in its provider-family-gcp dependency automatically. Pinned to exact versions so a sync
-# never upgrades anything by surprise.
+# Crossplane packages. Two providers: the Cloud SQL one (not the whole GCP family - each
+# sub-provider is a separate pod with its own CRDs, and this repo only needs sql.gcp; Crossplane
+# pulls in its provider-family-gcp dependency automatically) and OpenTofu for Managed Kafka (end of
+# file). Pinned to exact versions so a sync never upgrades anything by surprise.
 apiVersion: pkg.crossplane.io/v1
 kind: Provider
 metadata:
@@ -30,3 +30,18 @@ metadata:
     argocd.argoproj.io/sync-wave: "0"
 spec:
   package: xpkg.crossplane.io/crossplane-contrib/function-auto-ready:v0.7.0
+---
+# Managed Service for Apache Kafka. provider-upjet-gcp has no managedkafka resources (checked up
+# to v3.1.0), so the KafkaCluster Composition runs an inline OpenTofu module through this provider
+# instead. A separate provider with its own pod and Google identity (crossplane-runtime-config.yaml),
+# so it never holds Cloud SQL rights and provider-gcp-sql never holds Kafka ones.
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-opentofu
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  package: xpkg.upbound.io/upbound/provider-opentofu:v1.1.10
+  runtimeConfigRef:
+    name: provider-opentofu

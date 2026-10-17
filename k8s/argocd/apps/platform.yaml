@@ -1,5 +1,5 @@
-# k8s/platform/: the Secret Manager ClusterSecretStore, Crossplane's GCP Cloud SQL provider +
-# functions + credentials config, and the PostgresInstance API. Needs the CRDs from the
+# k8s/platform/: the Secret Manager ClusterSecretStore, Crossplane's GCP Cloud SQL and OpenTofu
+# providers + functions + credentials configs, and the PostgresInstance and KafkaCluster APIs. Needs the CRDs from the
 # external-secrets and crossplane Applications (previous wave); inside, its own sync waves put
 # the Crossplane packages before the objects whose CRDs they install.
 apiVersion: argoproj.io/v1alpha1
@@ -12,7 +12,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/miqui/gke-quarkus-grpc-o2.git
+    repoURL: https://github.com/miqui/gke-quarkus-grpc-o2-multi-kafka.git
     targetRevision: main
     path: k8s/platform
   destination:
