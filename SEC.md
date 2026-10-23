@@ -4,6 +4,11 @@
 handling, the Hazelcast client, the Gateway, NetworkPolicies, RBAC, IAM and Workload Identity
 Federation in `gke-deploy.sh`, secrets handling, the Dockerfile and both CI workflows.
 
+Ported from [gke-quarkus-grpc-o2-multi](https://github.com/miqui/gke-quarkus-grpc-o2-multi),
+together with its fixes (Cloud Armor allowlist, Unconfined AppArmor denied by Kyverno). The
+KafkaCluster additions (provider-opentofu, `k8s/platform/kafka-*.yaml`) were reviewed on
+2026-10-23 and nothing new reached the bar; see "Checked and found solid" and the CI note at the end.
+
 | # | Severity | Finding | Status |
 | --- | --- | --- | --- |
 | 1 | High | Unauthenticated, internet-facing API; worker identity is self-asserted | **1a fixed** (Cloud Armor allowlist); 1b-1d open |
@@ -94,6 +99,23 @@ grpcurl grpc.miqui.dev:443 grpc.health.v1.Health/Check  # from an allowed IP: SE
 - **Containers:** non-root UID 10001, read-only root filesystem, all capabilities dropped,
   `seccomp: RuntimeDefault`, all enforced by Kyverno.
 
-**Not security, but probably a bug:** `gke-deploy.sh` defaults `GITHUB_REPO` to
-`miqui/gke-quarkus-grpc-o2` (the original repo), not this `-multi` repo. Unless you override it,
-the CI here can't impersonate the push service account, and the original repo's main branch can.
+- **Kafka:** private access only (no public config), SASL/TLS on :9092. provider-opentofu has its
+  own GSA (`crossplane-kafka`, `roles/managedkafka.admin` only) through Workload Identity. The
+  OpenTofu module is fixed in the Composition; the claim only supplies `varmap` values (topic names
+  regex-checked, counts and partitions bounded), never HCL. The tofu state Secret holds no
+  credentials, because Kafka uses IAM auth.
+
+**CI image path is shared with the upstream repos (not a vuln - one owner).** This repo, `-multi`
+and the original `gke-quarkus-grpc-o2` all push `.../springboot-grpc-o2/job-manager-api` through
+the same `ci-springboot-grpc-o2` SA in `k8s-dev-412419`. Each `gke-deploy.sh` run adds its repo's
+`workloadIdentityUser` binding and none removes the others. So a push to main in any of them can be
+deployed by this cluster's Image Updater. To decouple: give this repo its own image path or CI SA,
+or remove the other repos' bindings:
+
+```bash
+for r in gke-quarkus-grpc-o2 gke-quarkus-grpc-o2-multi; do
+  gcloud iam service-accounts remove-iam-policy-binding \
+    ci-springboot-grpc-o2@k8s-dev-412419.iam.gserviceaccount.com --role=roles/iam.workloadIdentityUser \
+    --member="principalSet://iam.googleapis.com/projects/$(gcloud projects describe k8s-dev-412419 --format='value(projectNumber)')/locations/global/workloadIdentityPools/github/attribute.repository/miqui/$r"
+done
+```
