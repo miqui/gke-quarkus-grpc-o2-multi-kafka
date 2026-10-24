@@ -1,6 +1,7 @@
 # Local dependencies for the job-manager-api (defaults in application.properties match):
 #
 #   docker compose up -d                      Postgres 16 + Hazelcast (same cluster name as GKE)
+#                                             + a single-node Kafka (topics auto-created)
 #   docker compose --profile otel up -d       + an OTel Collector exposing what the app pushes
 #                                             as Prometheus metrics on http://localhost:8889/metrics
 #                                             (the same exporter config as the cluster's collector)
@@ -34,6 +35,24 @@ services:
     ports:
       - "5701:5701"
 
+  # PLAINTEXT, no auth: localhost:9092 from the host, kafka:29092 from other containers.
+  kafka:
+    image: apache/kafka:3.9.1
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: HOST://:9092,DOCKER://:29092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: HOST://localhost:9092,DOCKER://kafka:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: HOST:PLAINTEXT,DOCKER:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: DOCKER
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+    ports:
+      - "9092:9092"
+
   otel-collector:
     profiles: [otel, app]
     image: otel/opentelemetry-collector-contrib:0.114.0
@@ -53,10 +72,13 @@ services:
         condition: service_healthy
       hazelcast:
         condition: service_started
+      kafka:
+        condition: service_started
     environment:
       DB_HOST: postgres
       DB_PASSWORD: message_app
       HAZELCAST_HOST: hazelcast
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
       POD_NAME: compose
     read_only: true

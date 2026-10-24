@@ -8,6 +8,7 @@ resources:
   - configmap.yaml
   - postgres.yaml
   - kafka.yaml
+  - serviceaccount.yaml
   - hazelcast-jmx-exporter-configmap.yaml
   - hazelcast-deployment.yaml
   - hazelcast-service.yaml
