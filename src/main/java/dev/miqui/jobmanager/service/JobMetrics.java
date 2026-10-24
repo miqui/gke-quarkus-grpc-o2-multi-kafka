@@ -20,7 +20,10 @@ import java.util.concurrent.atomic.AtomicLong;
  *   <li>{@code job.claims{outcome}} - ClaimJob calls that got a job ("claimed") or none ("empty");</li>
  *   <li>{@code job.queue.wait} - from when a job became claimable (run_after) to its claim;</li>
  *   <li>{@code job.lease.expirations} - leases the reaper took back;</li>
- *   <li>{@code jobs{state}} - jobs per state, refreshed from the database by {@code JobStats}.</li>
+ *   <li>{@code jobs{state}} - jobs per state, refreshed from the database by {@code JobStats};</li>
+ *   <li>{@code job.outbox.published{topic}} / {@code job.outbox.failures{topic}} - Kafka messages
+ *       the outbox relay published, or pushed back after a failed send;</li>
+ *   <li>{@code job.outbox.pending} - messages in the outbox, refreshed by {@code JobStats}.</li>
  * </ul>
  */
 @ApplicationScoped
@@ -31,6 +34,7 @@ public class JobMetrics {
     private final MeterRegistry registry;
     private final Timer queueWait;
     private final Map<String, AtomicLong> jobsByState = new ConcurrentHashMap<>();
+    private final AtomicLong outboxPending = new AtomicLong();
 
     public JobMetrics(MeterRegistry registry) {
         this.registry = registry;
@@ -47,6 +51,9 @@ public class JobMetrics {
                     .tag("state", state)
                     .register(registry);
         }
+        Gauge.builder("job.outbox.pending", outboxPending, AtomicLong::doubleValue)
+                .description("Kafka messages waiting in the outbox (as of the last refresh)")
+                .register(registry);
     }
 
     public void transition(String from, String to) {
@@ -77,6 +84,26 @@ public class JobMetrics {
                 .description("Running jobs whose lease expired and were taken back by the reaper")
                 .register(registry)
                 .increment();
+    }
+
+    public void outboxPublished(String topic) {
+        Counter.builder("job.outbox.published")
+                .description("Kafka messages published by the outbox relay")
+                .tag("topic", topic)
+                .register(registry)
+                .increment();
+    }
+
+    public void outboxFailed(String topic) {
+        Counter.builder("job.outbox.failures")
+                .description("Kafka messages the outbox relay could not publish (retried later)")
+                .tag("topic", topic)
+                .register(registry)
+                .increment();
+    }
+
+    public void outboxPending(long count) {
+        outboxPending.set(count);
     }
 
     public void jobsByState(Map<String, Long> counts) {

@@ -48,8 +48,10 @@ the server certificate; the server CA is in the `cloudsql-connection` Secret for
 
 ## job-manager-api (`messagedb`)
 
-Tables (Flyway [`V3__jobs.sql`](src/main/resources/db/migration/V3__jobs.sql)): `jobs`, `job_events`,
-`job_types`, plus Flyway's `flyway_schema_history`. JSON columns (`spec`, `labels`, `result`,
+Tables (Flyway [`V3__jobs.sql`](src/main/resources/db/migration/V3__jobs.sql),
+[`V4__job_outbox.sql`](src/main/resources/db/migration/V4__job_outbox.sql)): `jobs`, `job_events`,
+`job_types`, `job_outbox` (Kafka messages CreateJob wrote and the outbox relay hasn't published
+yet), plus Flyway's `flyway_schema_history`. JSON columns (`spec`, `labels`, `result`,
 `error`, `detail`) are JSONB: query into them with `->`, `->>` and `@>`.
 
 ### 1. Job counts by state (what the `jobs{state}` gauge reports)
@@ -144,6 +146,17 @@ GROUP BY j.type;
 
 (Approximate for retried jobs: `run_after` is the latest one. The `job_queue_wait` histogram in
 Grafana is exact.)
+
+### Kafka outbox backlog (what the `job.outbox.pending` gauge reports)
+
+Rows normally live about a second. A growing backlog, or `attempts > 0`, means the relay can't
+reach Kafka (or the topic is missing - each job type needs a `jobs-<type>` topic in
+[`k8s/kafka.yaml`](k8s/kafka.yaml)).
+
+```sql
+SELECT topic, count(*), max(attempts) AS max_attempts, min(created_at) AS oldest
+FROM job_outbox GROUP BY topic ORDER BY topic;
+```
 
 ### Register a job type
 

@@ -19,5 +19,8 @@ data:
   # Sample 10% of new traces (children follow their parent's decision) - a k6 run
   # otherwise floods OpenObserve's 5Gi PVC. Raise to 1.0 temporarily when debugging.
   TRACES_SAMPLING_PROBABILITY: "0.1"
+  # Managed Service for Apache Kafka only accepts SASL over TLS (OAUTHBEARER, see
+  # application.properties). KAFKA_BOOTSTRAP_SERVERS comes from the kafka-connection Secret.
+  KAFKA_SECURITY_PROTOCOL: "SASL_SSL"
   HAZELCAST_HOST: "hazelcast"
   HAZELCAST_PORT: "5701"

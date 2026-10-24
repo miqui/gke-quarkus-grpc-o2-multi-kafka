@@ -51,12 +51,13 @@ CERT="grpc-cert"
 CERT_MAP="grpc-cert-map"
 CERT_MAP_ENTRY="grpc-cert-map-entry"
 SERVICE_ACCOUNTS=(gke-dev-nodes crossplane-gcp crossplane-kafka external-secrets argocd-image-updater
-                  ci-springboot-grpc-o2)
+                  job-manager-api ci-springboot-grpc-o2)
 PROJECT_ROLES=(
   "gke-dev-nodes=roles/container.defaultNodeServiceAccount"
   "crossplane-gcp=roles/cloudsql.admin"
   "crossplane-gcp=roles/compute.networkUser"
   "crossplane-kafka=roles/managedkafka.admin"
+  "job-manager-api=roles/managedkafka.client"
 )
 SECRETS=(postgres-app-password grafana-admin-user grafana-admin-password
          openobserve-root-email openobserve-root-password)

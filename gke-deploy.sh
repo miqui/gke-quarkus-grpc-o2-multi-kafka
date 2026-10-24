@@ -76,6 +76,7 @@ NODE_SA="gke-dev-nodes"
 CROSSPLANE_SA="crossplane-gcp"          # KSA crossplane-system/provider-gcp
 KAFKA_SA="crossplane-kafka"             # KSA crossplane-system/provider-opentofu
 ESO_SA="external-secrets"               # KSA external-secrets/external-secrets
+APP_SA="job-manager-api"                # KSA default/job-manager-api (k8s/serviceaccount.yaml)
 IMAGE_UPDATER_SA="argocd-image-updater" # KSA argocd/argocd-image-updater
 CI_SA="ci-springboot-grpc-o2"   # one CI service account per project
 WIF_POOL="github"
@@ -203,6 +204,7 @@ ensure_sa "$NODE_SA"          "GKE dev-cluster nodes"
 ensure_sa "$CROSSPLANE_SA"    "Crossplane GCP provider (Cloud SQL)"
 ensure_sa "$KAFKA_SA"         "Crossplane OpenTofu provider (Managed Kafka)"
 ensure_sa "$ESO_SA"           "External Secrets Operator (Secret Manager reader)"
+ensure_sa "$APP_SA"           "job-manager-api (Managed Kafka producer)"
 ensure_sa "$IMAGE_UPDATER_SA" "Argo CD Image Updater (Artifact Registry reader)"
 ensure_sa "$CI_SA"            "GitHub Actions image push"
 
@@ -216,6 +218,8 @@ project_role "$CROSSPLANE_SA" roles/compute.networkUser
 # Crossplane (OpenTofu) creates/deletes the Managed Kafka cluster and its topics. The service's own
 # agent sets up the Private Service Connect endpoints in the subnet.
 project_role "$KAFKA_SA" roles/managedkafka.admin
+# The API publishes jobs to the cluster's topics (SASL/OAUTHBEARER with its Workload Identity).
+project_role "$APP_SA" roles/managedkafka.client
 # ESO gets secretAccessor per secret (gke-secrets-seed.sh), not project-wide.
 
 # ---- 2. Dedicated VPC + subnet --------------------------------------------
@@ -376,6 +380,7 @@ wi_bind "$CROSSPLANE_SA"    crossplane-system provider-gcp
 wi_bind "$KAFKA_SA"         crossplane-system provider-opentofu
 wi_bind "$ESO_SA"           external-secrets  external-secrets
 wi_bind "$IMAGE_UPDATER_SA" argocd            argocd-image-updater
+wi_bind "$APP_SA"           default           job-manager-api
 
 # ---- 8. Artifact Registry ---------------------------------------------------
 log "Creating Artifact Registry repo: $REPO ($REGION)"

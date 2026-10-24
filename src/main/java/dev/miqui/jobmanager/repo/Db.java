@@ -114,6 +114,13 @@ public class Db {
         }
     }
 
+    /** A bigint[] parameter (e.g. for {@code = ANY(?)}). */
+    public record LongArray(List<Long> values) {
+        public LongArray {
+            values = List.copyOf(values);
+        }
+    }
+
     private static PreparedStatement prepare(Connection c, String sql, Object... params) throws SQLException {
         PreparedStatement statement = c.prepareStatement(sql);
         try {
@@ -133,6 +140,7 @@ public class Db {
             case null -> statement.setNull(index, Types.VARCHAR);
             case Instant instant -> statement.setTimestamp(index, Timestamp.from(instant));
             case TextArray array -> statement.setArray(index, c.createArrayOf("text", array.values().toArray()));
+            case LongArray array -> statement.setArray(index, c.createArrayOf("bigint", array.values().toArray()));
             default -> statement.setObject(index, value);
         }
     }

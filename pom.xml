@@ -17,6 +17,7 @@
         <quarkus.platform.version>3.40.1</quarkus.platform.version>
         <!-- Kept at 5.5.0 on purpose (talks to the 5.7 member fine): 5.7.0 bundles more vulnerable Jackson copies. See TRIVY.md, "Accepted risk". -->
         <hazelcast.version>5.5.0</hazelcast.version>
+        <managed-kafka-auth.version>1.0.6</managed-kafka-auth.version>
         <assertj.version>3.27.7</assertj.version>
         <surefire.version>3.5.4</surefire.version>
         <quality.coverage.line.minimum>0.93</quality.coverage.line.minimum>
@@ -87,6 +88,31 @@
         <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-cache</artifactId>
+        </dependency>
+        <!-- Kafka producer for the job outbox (built by KafkaConfig); Dev Services start a broker in
+             dev mode and tests. -->
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-kafka-client</artifactId>
+        </dependency>
+        <!-- SASL/OAUTHBEARER for Managed Service for Apache Kafka: GcpLoginCallbackHandler turns the
+             pod's Workload Identity credentials into broker tokens. Only that class is used: the
+             Schema Registry client (and its Jackson) is for the jar's other class, and kafka-clients
+             comes from the Quarkus BOM. -->
+        <dependency>
+            <groupId>com.google.cloud.hosted.kafka</groupId>
+            <artifactId>managed-kafka-auth-login-handler</artifactId>
+            <version>${managed-kafka-auth.version}</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>io.confluent</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>com.fasterxml.jackson.core</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
         <!-- Plain client, built by CacheConfig (single-member routing, bounded connect timeout). -->
         <dependency>

@@ -15,6 +15,9 @@ spec:
         app: job-manager-api
     spec:
       terminationGracePeriodSeconds: 45
+      # Bound to the job-manager-api GSA by Workload Identity (k8s/serviceaccount.yaml): the
+      # identity the Kafka producer authenticates as.
+      serviceAccountName: job-manager-api
       securityContext:
         # runAsUser is set explicitly as well as runAsNonRoot: 10001 is the image's numeric `app`
         # uid/gid (see the Dockerfile), which is what lets the kubelet verify it's non-root. It is
@@ -124,6 +127,14 @@ spec:
                 secretKeyRef:
                   name: cloudsql-connection
                   key: privateIP
+            # Managed Kafka bootstrap address, from the Secret Crossplane writes for the
+            # KafkaCluster (k8s/kafka.yaml). Until that exists (first provisioning takes ~30
+            # minutes) the pod shows CreateContainerConfigError and the kubelet keeps retrying.
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              valueFrom:
+                secretKeyRef:
+                  name: kafka-connection
+                  key: bootstrap_address
             - name: POD_NAME
               valueFrom:
                 fieldRef:

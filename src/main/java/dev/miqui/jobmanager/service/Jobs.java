@@ -7,6 +7,7 @@ import dev.miqui.jobmanager.repo.Db;
 import dev.miqui.jobmanager.repo.JobEventRepository;
 import dev.miqui.jobmanager.repo.JobRepository;
 import dev.miqui.jobmanager.repo.Json;
+import dev.miqui.jobmanager.repo.OutboxRepository;
 import dev.miqui.jobmanager.repo.Rows;
 import dev.miqui.jobmanager.v1.Job;
 import dev.miqui.jobmanager.v1.ListJobEventsResponse;
@@ -29,20 +30,24 @@ public class Jobs {
     private final Db db;
     private final JobRepository jobs;
     private final JobEventRepository events;
+    private final OutboxRepository outbox;
     private final JobCache cache;
     private final JobMetrics metrics;
 
-    public Jobs(Db db, JobRepository jobs, JobEventRepository events, JobCache cache, JobMetrics metrics) {
+    public Jobs(Db db, JobRepository jobs, JobEventRepository events, OutboxRepository outbox, JobCache cache,
+                JobMetrics metrics) {
         this.db = db;
         this.jobs = jobs;
         this.events = events;
+        this.outbox = outbox;
         this.cache = cache;
         this.metrics = metrics;
     }
 
     /**
      * With an idempotency key that was already used, returns the job the first call created (and
-     * records nothing). The type was validated against the registry by the caller.
+     * records nothing). The type was validated against the registry by the caller. A new job's
+     * Kafka message is written to the outbox in the same transaction; {@link OutboxRelay} sends it.
      */
     public Job create(JobRepository.NewJob request) {
         Created created = db.tx(c -> {
@@ -55,6 +60,7 @@ public class Jobs {
             }
             Job job = inserted.get();
             events.insert(c, UUID.fromString(job.getId()), null, "QUEUED", API_ACTOR, "{}");
+            outbox.insert(c, job);
             return new Created(job, true);
         });
         if (created.isNew()) {
